@@ -72,7 +72,7 @@ class Connection:
         if self.access_token:
             headers["Authorization"] = f"Bearer {self.access_token}"
 
-        logger.info("正在连接 %s", self.ws_url)
+        logger.info("正在连接 {}", self.ws_url)
         async with self._session.ws_connect(self.ws_url, headers=headers) as ws:
             self._ws = ws
             logger.info("WebSocket 已连接")
@@ -81,7 +81,7 @@ class Connection:
                     try:
                         data = json.loads(msg.data)
                     except json.JSONDecodeError:
-                        logger.warning("无法解析的消息: %s", msg.data)
+                        logger.warning("无法解析的消息: {}", msg.data)
                         continue
                     if self._on_message:
                         await self._on_message(data)

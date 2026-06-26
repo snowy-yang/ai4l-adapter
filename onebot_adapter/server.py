@@ -337,7 +337,7 @@ class Server:
     async def run(self) -> None:
         """启动 HTTP + SSE + WS 服务, 并阻塞运行 OneBot WS 连接."""
         await self._start_http()
-        logger.info("协议服务监听 http://%s:%d", self.host, self.port)
+        logger.info("协议服务监听 http://{}:{}", self.host, self.port)
         await self.bot.run()
 
     async def close(self) -> None:

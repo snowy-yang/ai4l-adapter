@@ -123,4 +123,4 @@ class Dispatcher:
             try:
                 await handler(event)
             except Exception:
-                logger.exception("handler error for %s", event.post_type)
+                logger.exception("handler error for {}", event.post_type)
