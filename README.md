@@ -102,7 +102,10 @@ SSE 首帧发送 `retry: 3000`, 客户端断开后按此间隔自动重连.
   "kind": "group",
   "user_id": 100,
   "group_id": 200,
-  "message": "hi [at:{'qq': '1'}]",
+  "message": [
+    {"type": "text", "text": "hi "},
+    {"type": "at", "qq": "1"}
+  ],
   "message_id": 99,
   "self_id": 999
 }
@@ -113,9 +116,18 @@ SSE 首帧发送 `retry: 3000`, 客户端断开后按此间隔自动重连.
 | `kind` | str | `"group"` 或 `"private"` |
 | `user_id` | int | 发送者 QQ |
 | `group_id` | int / null | 群号, 私聊为 null |
-| `message` | str | 消息文本表示 (非文本段渲染为 `[type:{data}]`) |
+| `message` | array | 消息段数组, 扁平对象格式 (见下) |
 | `message_id` | int / null | 消息 ID, 可能缺失 |
 | `self_id` | int | 机器人 QQ |
+
+消息段使用扁平对象, 不嵌套 `data`, 不含 CQ 码:
+
+| type | 字段 | 说明 |
+|------|------|------|
+| `text` | `text` | 纯文本 |
+| `at` | `qq` | @某人 |
+| `reply` | `id` | 回复消息 |
+| `image` | `file` + 额外字段 | 图片 |
 
 #### notice
 
@@ -157,7 +169,11 @@ SSE 首帧发送 `retry: 3000`, 客户端断开后按此间隔自动重连.
 
 `action` 直接使用 OneBot API 名 (send_msg / send_private_msg / send_group_msg / get_login_info 等). `params` 透传给 OneBot.
 
-便利: `params.message` 传字符串时自动转为消息段数组 `[{type:text}]`, 传列表时原样透传.
+`params.message` 使用与事件相同的扁平消息段格式, 适配器自动翻译成 OneBot 嵌套格式. 传字符串时作为纯文本便利处理.
+
+```json
+{"action": "send_msg", "params": {"group_id": 1, "message": [{"type": "text", "text": "hi"}, {"type": "at", "qq": "1"}]}}
+```
 
 响应:
 

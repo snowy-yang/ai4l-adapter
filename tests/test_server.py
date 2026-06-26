@@ -46,7 +46,7 @@ class TestTranslate:
             "kind": "group",
             "user_id": 1,
             "group_id": 2,
-            "message": "hi",
+            "message": [{"type": "text", "text": "hi"}],
             "message_id": 99,
             "self_id": 100,
         }
@@ -64,7 +64,7 @@ class TestTranslate:
         assert proto["data"]["kind"] == "private"
         assert proto["data"]["group_id"] is None
 
-    def test_message_str_uses_message_repr(self) -> None:
+    def test_message_segments_flattened_to_proto(self) -> None:
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
@@ -76,19 +76,33 @@ class TestTranslate:
             }
         )
         proto = Server._translate(event)
-        assert proto["data"]["message"] == "hi [at:{'qq': '1'}]"
+        assert proto["data"]["message"] == [
+            {"type": "text", "text": "hi "},
+            {"type": "at", "qq": "1"},
+        ]
 
-    def test_message_missing_message_id_is_none(self) -> None:
+    def test_message_image_segment_with_extra_fields(self) -> None:
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
                 "message_type": "private",
                 "user_id": 1,
-                "message": "x",
+                "message": [
+                    {"type": "image", "data": {"file": "f.png", "cache": 0}},
+                ],
             }
         )
         proto = Server._translate(event)
-        assert proto["data"]["message_id"] is None
+        assert proto["data"]["message"] == [
+            {"type": "image", "file": "f.png", "cache": 0},
+        ]
+
+    def test_message_empty_segments(self) -> None:
+        event = MessageEvent.from_raw(
+            {"post_type": "message", "message_type": "private", "user_id": 1}
+        )
+        proto = Server._translate(event)
+        assert proto["data"]["message"] == []
 
     def test_notice_event(self) -> None:
         event = NoticeEvent.from_raw(
@@ -230,15 +244,42 @@ class TestHandleAction:
             {"type": "text", "data": {"text": "hello"}}
         ]
 
-    async def test_list_message_passed_through(self) -> None:
+    async def test_proto_segments_translated_to_onebot(self) -> None:
         bot = Bot("ws://x")
         sent = _stub_bot_api(bot)
         server = Server(bot)
-        segs = [{"type": "image", "data": {"file": "f.png"}}]
+        proto_segs = [
+            {"type": "text", "text": "hi "},
+            {"type": "at", "qq": "1"},
+        ]
         await server._handle_action(
-            {"action": "send_msg", "params": {"user_id": 1, "message": segs}}
+            {"action": "send_msg", "params": {"user_id": 1, "message": proto_segs}}
         )
-        assert sent[0]["params"]["message"] == segs
+        assert sent[0]["params"]["message"] == [
+            {"type": "text", "data": {"text": "hi "}},
+            {"type": "at", "data": {"qq": "1"}},
+        ]
+
+    async def test_proto_image_segment_translated_to_onebot(self) -> None:
+        bot = Bot("ws://x")
+        sent = _stub_bot_api(bot)
+        server = Server(bot)
+        proto_segs = [{"type": "image", "file": "f.png", "cache": 0}]
+        await server._handle_action(
+            {"action": "send_msg", "params": {"user_id": 1, "message": proto_segs}}
+        )
+        assert sent[0]["params"]["message"] == [
+            {"type": "image", "data": {"file": "f.png", "cache": 0}},
+        ]
+
+    async def test_empty_message_list_passes_through(self) -> None:
+        bot = Bot("ws://x")
+        sent = _stub_bot_api(bot)
+        server = Server(bot)
+        await server._handle_action(
+            {"action": "send_msg", "params": {"user_id": 1, "message": []}}
+        )
+        assert sent[0]["params"]["message"] == []
 
     async def test_no_params_defaults_to_empty(self) -> None:
         bot = Bot("ws://x")

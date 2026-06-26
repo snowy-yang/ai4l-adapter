@@ -10,8 +10,31 @@ from aiohttp import web
 from .api import ApiError
 from .bot import Bot
 from .event import Event, MessageEvent, NoticeEvent, RequestEvent
+from .message import MessageSegment
 
 logger = logging.getLogger("onebot_adapter.server")
+
+
+def _ob_segments_to_proto(segments: list[MessageSegment]) -> list[dict[str, Any]]:
+    """OneBot 消息段 (嵌套 {type, data}) -> 协议消息段 (扁平 {type, ...})."""
+    result: list[dict[str, Any]] = []
+    for seg in segments:
+        proto: dict[str, Any] = {"type": seg.type}
+        proto.update(seg.data)
+        result.append(proto)
+    return result
+
+
+def _proto_segments_to_ob(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """协议消息段 (扁平 {type, ...}) -> OneBot 消息段 (嵌套 {type, data})."""
+    result: list[dict[str, Any]] = []
+    for seg in segments:
+        ob: dict[str, Any] = {
+            "type": seg["type"],
+            "data": {k: v for k, v in seg.items() if k != "type"},
+        }
+        result.append(ob)
+    return result
 
 
 class Server:
@@ -69,7 +92,7 @@ class Server:
                     "kind": event.message_type,
                     "user_id": event.user_id,
                     "group_id": event.group_id,
-                    "message": str(event.message),
+                    "message": _ob_segments_to_proto(event.message.segments),
                     "message_id": event.raw.get("message_id"),
                     "self_id": event.self_id,
                 },
@@ -109,9 +132,12 @@ class Server:
             }
         action = body["action"]
         params = body.get("params") or {}
-        # 字符串消息 -> OneBot 消息段数组; 列表原样透传
-        if isinstance(params.get("message"), str):
-            params["message"] = [{"type": "text", "data": {"text": params["message"]}}]
+        # 协议消息段 (扁平) -> OneBot 消息段 (嵌套); 字符串便利转 text 段
+        msg = params.get("message")
+        if isinstance(msg, str):
+            params["message"] = [{"type": "text", "data": {"text": msg}}]
+        elif isinstance(msg, list):
+            params["message"] = _proto_segments_to_ob(msg)
 
         try:
             resp = await self.bot.api.call(action, **params)
