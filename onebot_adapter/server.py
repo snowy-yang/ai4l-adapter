@@ -157,8 +157,45 @@ class Server:
     async def _on_event(self, event: Event) -> None:
         proto = await self._translate(event)
         logger.debug("事件 {}: {}", proto["type"], proto["data"])
+        self._log_event_summary(proto)
         for q in self._subscribers:
             q.put_nowait(proto)
+
+    @staticmethod
+    def _log_event_summary(proto: dict[str, Any]) -> None:
+        etype = proto["type"]
+        data = proto["data"]
+        if etype == "message":
+            msg = data.get("message", [])
+            # 取消息段的文本表示, 截断到一行
+            parts: list[str] = []
+            for seg in msg:
+                if seg.get("type") == "text":
+                    parts.append(seg.get("text", ""))
+                else:
+                    parts.append(f"[{seg.get('type')}]")
+            text = "".join(parts).replace("\n", " ")
+            if len(text) > 50:
+                text = text[:50] + "..."
+            scope = (
+                f"group={data.get('group_id')}" if data.get("group_id") else "private"
+            )
+            logger.info(
+                "[message] {} user={} {} | {}",
+                scope,
+                data.get("user_id"),
+                data.get("detail"),
+                text,
+            )
+        elif etype == "notice":
+            logger.info(
+                "[notice] {} user={} sub={}",
+                data.get("detail"),
+                data.get("user_id"),
+                data.get("sub"),
+            )
+        else:
+            logger.info("[{}] {}", etype, data)
 
     async def _translate(self, event: Event) -> dict[str, Any]:
         if isinstance(event, MessageEvent):
