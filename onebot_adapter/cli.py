@@ -47,8 +47,6 @@ async def _run(config: Config) -> None:
         bot,
         host=config.server.host,
         port=config.server.port,
-        events_path=config.server.events_path,
-        action_path=config.server.action_path,
         ws_path=config.server.ws_path,
     )
     await server.run()

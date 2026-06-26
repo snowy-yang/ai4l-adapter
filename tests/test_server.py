@@ -363,14 +363,12 @@ class TestServerConstruction:
         for pt in ("message", "notice", "request"):
             assert server._on_event in bot.dispatcher._handlers[pt]
 
-    def test_default_host_port_and_paths(self) -> None:
+    def test_default_host_port_and_ws_path(self) -> None:
         bot = Bot("ws://x")
         server = Server(bot)
         assert server.host == "127.0.0.1"
         assert server.port == 8080
-        assert server.events_path == "/events"
-        assert server.action_path == "/action"
-        assert server.ws_path == "/ws"
+        assert server.ws_path == "/"
 
     def test_custom_paths(self) -> None:
         bot = Bot("ws://x")
@@ -378,25 +376,19 @@ class TestServerConstruction:
             bot,
             host="0.0.0.0",
             port=9000,
-            events_path="/e",
-            action_path="/a",
             ws_path="/w",
         )
         assert server.host == "0.0.0.0"
         assert server.port == 9000
-        assert server.events_path == "/e"
-        assert server.action_path == "/a"
         assert server.ws_path == "/w"
 
-    def test_build_app_has_all_routes(self) -> None:
+    def test_build_app_has_ws_route(self) -> None:
         bot = Bot("ws://x")
         server = Server(bot)
         app = server._build_app()
         resources = [r.resource for r in app.router.routes()]
         paths = {r.canonical for r in resources if r is not None}
-        assert "/events" in paths
-        assert "/action" in paths
-        assert "/ws" in paths
+        assert "/" in paths
 
 
 class TestOnEventDispatch:
@@ -445,13 +437,12 @@ class TestHandleAction:
         bot = Bot("ws://x")
         _stub_bot_api(bot, {"retcode": 0, "data": {"message_id": 7}})
         server = Server(bot)
-        status, payload = await server._handle_action(
+        payload = await server._handle_action(
             {
                 "action": "send_msg",
                 "params": {"group_id": 1, "message": [{"type": "text", "text": "hi"}]},
             }
         )
-        assert status == 200
         assert payload == {"ok": True, "data": {"message_id": 7}, "error": None}
 
     async def test_text_segment_translated_to_onebot(self) -> None:
@@ -563,16 +554,16 @@ class TestHandleAction:
     async def test_missing_action_returns_400(self) -> None:
         bot = Bot("ws://x")
         server = Server(bot)
-        status, payload = await server._handle_action({"params": {}})
-        assert status == 400
+        payload = await server._handle_action({"params": {}})
         assert payload["ok"] is False
         assert payload["error"]["message"] == "missing action"
 
-    async def test_non_dict_body_returns_400(self) -> None:
+    async def test_non_dict_body_returns_error(self) -> None:
         bot = Bot("ws://x")
         server = Server(bot)
-        status, _ = await server._handle_action("not a dict")
-        assert status == 400
+        payload = await server._handle_action("not a dict")
+        assert payload["ok"] is False
+        assert payload["error"]["message"] == "missing action"
 
     async def test_api_error_returns_error_body(self) -> None:
         bot = Bot("ws://x")
@@ -584,17 +575,16 @@ class TestHandleAction:
 
         bot.connection.send = fake_send  # type: ignore[method-assign]
         server = Server(bot)
-        status, payload = await server._handle_action(
+        payload = await server._handle_action(
             {
                 "action": "send_msg",
                 "params": {"message": [{"type": "text", "text": "x"}]},
             }
         )
-        assert status == 200
         assert payload["ok"] is False
         assert payload["error"] == {"retcode": 1000, "message": "参数错误"}
 
-    async def test_send_failure_returns_500(self) -> None:
+    async def test_send_failure_returns_error(self) -> None:
         bot = Bot("ws://x")
 
         async def fake_send(payload: dict[str, Any]) -> None:
@@ -602,60 +592,9 @@ class TestHandleAction:
 
         bot.connection.send = fake_send  # type: ignore[method-assign]
         server = Server(bot)
-        status, payload = await server._handle_action({"action": "get_login_info"})
-        assert status == 500
+        payload = await server._handle_action({"action": "get_login_info"})
         assert payload["ok"] is False
         assert "WebSocket 未连接" in payload["error"]["message"]
-
-
-class TestActionEndpointIntegration:
-    async def test_post_action_returns_json_response(self) -> None:
-        bot = Bot("ws://x")
-        _stub_bot_api(bot, {"retcode": 0, "data": {"message_id": 7}})
-        server = Server(bot)
-        client = TestClient(TestServer(server._build_app()))
-        await client.start_server()
-        try:
-            resp = await client.post(
-                "/action",
-                json={
-                    "action": "send_msg",
-                    "params": {
-                        "group_id": 1,
-                        "message": [{"type": "text", "text": "hi"}],
-                    },
-                },
-            )
-            assert resp.status == 200
-            body = await resp.json()
-            assert body == {"ok": True, "data": {"message_id": 7}, "error": None}
-        finally:
-            await client.close()
-
-    async def test_post_invalid_json_returns_400(self) -> None:
-        bot = Bot("ws://x")
-        server = Server(bot)
-        client = TestClient(TestServer(server._build_app()))
-        await client.start_server()
-        try:
-            resp = await client.post("/action", data="not json")
-            assert resp.status == 400
-            body = await resp.json()
-            assert body["ok"] is False
-            assert body["error"]["message"] == "invalid json"
-        finally:
-            await client.close()
-
-    async def test_post_missing_action_returns_400(self) -> None:
-        bot = Bot("ws://x")
-        server = Server(bot)
-        client = TestClient(TestServer(server._build_app()))
-        await client.start_server()
-        try:
-            resp = await client.post("/action", json={"params": {}})
-            assert resp.status == 400
-        finally:
-            await client.close()
 
 
 class TestWebsocketEndpoint:
@@ -666,7 +605,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             req = {
                 "action": "send_msg",
                 "params": {"group_id": 1, "message": [{"type": "text", "text": "hi"}]},
@@ -686,7 +625,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             await ws.send_bytes(_pack({"params": {}}, use_bin_type=True))
             msg = await ws.receive(timeout=2)
             assert msg.type == aiohttp.WSMsgType.BINARY
@@ -710,7 +649,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             req = {
                 "action": "send_msg",
                 "params": {"message": [{"type": "text", "text": "x"}]},
@@ -730,7 +669,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             # 等 push_task 注册到 subscribers
             await asyncio.sleep(0.1)
             # 触发一个 notice 事件 (无媒体, 无需网络)
@@ -752,7 +691,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             await asyncio.sleep(0.1)
             raw = {
                 "post_type": "message",
@@ -780,7 +719,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             req = {
                 "action": "send_msg",
                 "params": {
@@ -804,7 +743,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             # 发 TEXT 帧, 应被忽略 (不发响应)
             await ws.send_str("not msgpack")
             # 发一个正确的 BINARY 帧, 确认连接仍正常
@@ -824,7 +763,7 @@ class TestWebsocketEndpoint:
         client = TestClient(TestServer(server._build_app()))
         await client.start_server()
         try:
-            ws = await client.ws_connect("/ws")
+            ws = await client.ws_connect("/")
             for _ in range(3):
                 await ws.send_bytes(
                     _pack({"action": "get_login_info"}, use_bin_type=True)

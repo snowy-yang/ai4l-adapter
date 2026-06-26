@@ -22,9 +22,7 @@ class OneBotConfig:
 class ServerConfig:
     host: str = "127.0.0.1"
     port: int = 8080
-    events_path: str = "/events"
-    action_path: str = "/action"
-    ws_path: str = "/ws"
+    ws_path: str = "/"
 
 
 @dataclass

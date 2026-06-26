@@ -11,9 +11,7 @@ reconnect_interval = 3.0          # 断线重连间隔 (秒)
 [server]
 host = "127.0.0.1"   # 监听地址
 port = 8080          # 监听端口
-events_path = "/events"   # SSE 事件端点 (HTTP/JSON)
-action_path = "/action"   # 指令端点 (HTTP/JSON)
-ws_path = "/ws"           # WebSocket 端点 (msgpack)
+ws_path = "/"        # WebSocket 端点 (msgpack)
 
 # ---- 日志 ----
 [log]

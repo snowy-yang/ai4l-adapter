@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
-import json
 import os
 from typing import Any, cast
 
@@ -106,13 +105,10 @@ def _packb(obj: Any) -> bytes:
 
 
 class Server:
-    """协议桥, 把 OneBot 翻译成极简协议对外暴露.
+    """协议桥, 把 OneBot 翻译成极简协议通过 WebSocket (msgpack) 对外暴露.
 
-    两条通道, 共用同一套事件翻译与指令处理逻辑:
-
-    - HTTP (JSON): GET events_path 收事件 (SSE), POST action_path 发指令.
-    - WebSocket (msgpack): WS ws_path 连上后, 事件以 msgpack 二进制帧推出,
-      指令以 msgpack 二进制帧发入并收到 msgpack 响应.
+    客户端连上 WS / 后, 事件以 msgpack 二进制帧推出,
+    指令以 msgpack 二进制帧发入并收到 msgpack 响应.
 
     协议消息段 (统一对象, 不含 CQ 码):
         text:  {"type":"text", "text":"hi"}
@@ -136,15 +132,11 @@ class Server:
         *,
         host: str = "127.0.0.1",
         port: int = 8080,
-        events_path: str = "/events",
-        action_path: str = "/action",
-        ws_path: str = "/ws",
+        ws_path: str = "/",
     ) -> None:
         self.bot = bot
         self.host = host
         self.port = port
-        self.events_path = events_path
-        self.action_path = action_path
         self.ws_path = ws_path
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._runner: web.AppRunner | None = None
@@ -195,10 +187,10 @@ class Server:
 
     # ---- 指令处理 ----
 
-    async def _handle_action(self, body: Any) -> tuple[int, dict[str, Any]]:
-        """核心指令逻辑: 解析 -> 调 OneBot API -> 返回 (status, 响应体)."""
+    async def _handle_action(self, body: Any) -> dict[str, Any]:
+        """核心指令逻辑: 解析 -> 调 OneBot API -> 返回响应体."""
         if not isinstance(body, dict) or not body.get("action"):
-            return 400, {
+            return {
                 "ok": False,
                 "data": None,
                 "error": {"retcode": -1, "message": "missing action"},
@@ -212,70 +204,20 @@ class Server:
 
         try:
             resp = await self.bot.api.call(action, **params)
-            return 200, {"ok": True, "data": resp.get("data"), "error": None}
+            return {"ok": True, "data": resp.get("data"), "error": None}
         except ApiError as e:
-            return 200, {
+            return {
                 "ok": False,
                 "data": None,
                 "error": {"retcode": e.retcode, "message": e.message},
             }
         except Exception as e:
             logger.exception("action 调用失败")
-            return 500, {
+            return {
                 "ok": False,
                 "data": None,
                 "error": {"retcode": -1, "message": str(e)},
             }
-
-    # ---- HTTP handlers ----
-
-    async def _sse_handler(self, request: web.Request) -> web.StreamResponse:
-        resp = web.StreamResponse(
-            headers={
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            }
-        )
-        await resp.prepare(request)
-        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._subscribers.add(queue)
-        try:
-            await resp.write(b"retry: 3000\n\n")
-            while True:
-                transport = request.transport
-                if transport is None or transport.is_closing():
-                    break
-                try:
-                    proto = await asyncio.wait_for(queue.get(), timeout=1.0)
-                except TimeoutError:
-                    continue
-                payload = json.dumps(proto["data"], ensure_ascii=False)
-                chunk = f"event: {proto['type']}\ndata: {payload}\n\n"
-                try:
-                    await resp.write(chunk.encode("utf-8"))
-                    await resp.drain()
-                except (ConnectionResetError, BrokenPipeError):
-                    break
-        finally:
-            self._subscribers.discard(queue)
-        return resp
-
-    async def _action_handler(self, request: web.Request) -> web.Response:
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response(
-                {
-                    "ok": False,
-                    "data": None,
-                    "error": {"retcode": -1, "message": "invalid json"},
-                },
-                status=400,
-            )
-        status, payload = await self._handle_action(body)
-        return web.json_response(payload, status=status)
 
     # ---- WebSocket handler (msgpack) ----
 
@@ -304,7 +246,7 @@ class Server:
                     if msg.data is None:
                         continue
                     body = msgpack.unpackb(msg.data, raw=False)
-                    _, payload = await self._handle_action(body)
+                    payload = await self._handle_action(body)
                     if not ws.closed:
                         await ws.send_bytes(_packb(payload))
                 elif msg.type in (
@@ -325,8 +267,6 @@ class Server:
 
     def _build_app(self) -> web.Application:
         app = web.Application()
-        app.router.add_get(self.events_path, self._sse_handler)
-        app.router.add_post(self.action_path, self._action_handler)
         app.router.add_get(self.ws_path, self._ws_handler)
         return app
 
@@ -338,9 +278,9 @@ class Server:
         await site.start()
 
     async def run(self) -> None:
-        """启动 HTTP + SSE + WS 服务, 并阻塞运行 OneBot WS 连接."""
+        """启动 WS 服务, 并阻塞运行 OneBot WS 连接."""
         await self._start_http()
-        logger.info("协议服务监听 http://{}:{}", self.host, self.port)
+        logger.info("协议服务监听 ws://{}:{}", self.host, self.port)
         await self.bot.run()
 
     async def close(self) -> None:

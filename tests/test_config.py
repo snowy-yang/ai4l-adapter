@@ -27,9 +27,7 @@ class TestConfigDefaults:
         c = ServerConfig()
         assert c.host == "127.0.0.1"
         assert c.port == 8080
-        assert c.events_path == "/events"
-        assert c.action_path == "/action"
-        assert c.ws_path == "/ws"
+        assert c.ws_path == "/"
 
     def test_log_defaults(self) -> None:
         c = LogConfig()
@@ -62,8 +60,6 @@ class TestConfigLoad:
             [server]
             host = "0.0.0.0"
             port = 9090
-            events_path = "/e"
-            action_path = "/a"
             ws_path = "/w"
 
             [log]
@@ -76,8 +72,6 @@ class TestConfigLoad:
         assert config.onebot.reconnect_interval == 5.0
         assert config.server.host == "0.0.0.0"
         assert config.server.port == 9090
-        assert config.server.events_path == "/e"
-        assert config.server.action_path == "/a"
         assert config.server.ws_path == "/w"
         assert config.log.level == "DEBUG"
 
