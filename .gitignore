@@ -9,5 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# 工具缓存
+.pytest_cache/
+.ruff_cache/
+
 # 用户本地配置 (从 templates/config.toml 复制)
 /config.toml
