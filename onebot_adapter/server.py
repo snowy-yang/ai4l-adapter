@@ -172,6 +172,7 @@ class Server:
         data = proto["data"]
         width = _terminal_width()
         budget = width or 80
+        scope = f"[群{data.get('group_id')}]" if data.get("group_id") else "[私聊]"
         if etype == "message":
             msg = data.get("message", [])
             parts: list[str] = []
@@ -181,12 +182,14 @@ class Server:
                 else:
                     parts.append(f"[{seg.get('type')}]")
             text = "".join(parts).replace("\n", " ")
-            scope = (
-                f"[群{data.get('group_id')}]" if data.get("group_id") else "[私聊]"
-            )
             line = f"{scope} {text}"
         elif etype == "notice":
-            line = f"[notice] {data}"
+            detail = data.get("detail", "")
+            sub = data.get("sub", "")
+            desc = detail if not sub else f"{detail} {sub}"
+            if data.get("comment"):
+                desc = f"{desc}: {data['comment']}"
+            line = f"{scope} {desc}"
         else:
             line = f"[{etype}] {data}"
         if len(line) > budget:
