@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import aiohttp
-
-logger = logging.getLogger("onebot_adapter.connection")
+from loguru import logger
 
 OnMessage = Callable[[dict[str, Any]], Awaitable[None]]
 

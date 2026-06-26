@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
 import shutil
 import sys
 from pathlib import Path
+
+from loguru import logger
 
 from . import Bot, Server
 from .config import Config
@@ -52,6 +53,20 @@ async def _run(config: Config) -> None:
     await server.run()
 
 
+def _setup_logging(level: str) -> None:
+    """配置 loguru, 替换默认 handler."""
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level=level.upper(),
+        format=(
+            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> "
+            "<level>{level: <8}</level> "
+            "<cyan>{name}</cyan> - <level>{message}</level>"
+        ),
+    )
+
+
 def main() -> None:
     args = parse_args()
     config_path = Path(args.config) if args.config else _DEFAULT_CONFIG
@@ -59,7 +74,7 @@ def main() -> None:
         print(f"配置文件不存在: {config_path}, 从模板自动生成")
         _init_config(config_path)
     config = Config.load(str(config_path))
-    logging.basicConfig(level=getattr(logging, config.log.level.upper(), logging.INFO))
+    _setup_logging(config.log.level)
     try:
         asyncio.run(_run(config))
     except KeyboardInterrupt:

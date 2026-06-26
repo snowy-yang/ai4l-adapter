@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .message import Message
+from loguru import logger
 
-logger = logging.getLogger("onebot_adapter.event")
+from .message import Message
 
 EventHandler = Callable[["Event"], Awaitable[Any]]
 

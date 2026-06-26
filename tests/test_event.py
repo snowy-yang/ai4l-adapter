@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
-import pytest
+from loguru import logger
 
 from onebot_adapter.event import (
     Dispatcher,
@@ -158,10 +157,11 @@ class TestDispatcher:
         await disp.dispatch(Event(post_type="notice", raw={}))
 
     async def test_handler_exception_is_swallowed_and_does_not_stop_others(
-        self, caplog: pytest.LogCaptureFixture
+        self,
     ) -> None:
         disp = Dispatcher()
         called: list[str] = []
+        logs: list[str] = []
 
         @disp.on("message")
         async def boom(event: Event) -> None:
@@ -171,11 +171,14 @@ class TestDispatcher:
         async def after(event: Event) -> None:
             called.append("after")
 
-        with caplog.at_level(logging.ERROR, logger="onebot_adapter.event"):
+        sink_id = logger.add(lambda msg: logs.append(msg), level="ERROR")
+        try:
             await disp.dispatch(Event(post_type="message", raw={}))
+        finally:
+            logger.remove(sink_id)
 
         assert called == ["after"]
-        assert any("handler error" in rec.message for rec in caplog.records)
+        assert any("handler error" in log for log in logs)
 
     async def test_handlers_isolated_per_post_type(self) -> None:
         disp = Dispatcher()

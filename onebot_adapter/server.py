@@ -4,20 +4,18 @@ import asyncio
 import base64
 import contextlib
 import json
-import logging
 import os
 from typing import Any, cast
 
 import aiohttp
 import msgpack
 from aiohttp import web
+from loguru import logger
 
 from .api import ApiError
 from .bot import Bot
 from .event import Event, MessageEvent, NoticeEvent, RequestEvent
 from .message import MessageSegment
-
-logger = logging.getLogger("onebot_adapter.server")
 
 # 这些 type 的消息段含二进制/媒体资源, 用 content (base64) 表示.
 _MEDIA_TYPES = frozenset({"image", "video", "audio", "file", "voice", "flash"})

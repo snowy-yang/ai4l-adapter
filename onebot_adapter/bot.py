@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from .api import ApiCaller
 from .connection import Connection
 from .event import Dispatcher, Event
 from .message import Message, MessageSegment
-
-logger = logging.getLogger("onebot_adapter")
 
 
 class Bot:
