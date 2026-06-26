@@ -26,14 +26,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _init_config(target: Path = _DEFAULT_CONFIG) -> Path:
-    """从模板复制配置文件, 若已存在则不覆盖."""
+def _init_config(target: Path = _DEFAULT_CONFIG) -> bool:
+    """从模板复制配置文件, 若已存在则不覆盖. 返回是否新生成."""
     if target.exists():
-        print(f"配置文件已存在: {target}")
-        return target
+        logger.info("配置文件已存在: {}", target)
+        return False
     shutil.copyfile(_TEMPLATE, target)
-    print(f"已生成: {target}")
-    return target
+    logger.info("已生成配置文件: {}", target)
+    return True
 
 
 async def _run(config: Config) -> None:
@@ -70,9 +70,18 @@ def _setup_logging(level: str) -> None:
 def main() -> None:
     args = parse_args()
     config_path = Path(args.config) if args.config else _DEFAULT_CONFIG
-    if not config_path.exists():
-        print(f"配置文件不存在: {config_path}, 从模板自动生成")
+
+    if args.init:
+        _setup_logging("INFO")
         _init_config(config_path)
+        return
+
+    if not config_path.exists():
+        _setup_logging("INFO")
+        _init_config(config_path)
+        logger.error("请编辑 {} 后重新启动", config_path)
+        sys.exit(1)
+
     config = Config.load(str(config_path))
     _setup_logging(config.log.level)
     try:
