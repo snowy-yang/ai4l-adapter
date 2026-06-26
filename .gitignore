@@ -13,5 +13,8 @@ wheels/
 .pytest_cache/
 .ruff_cache/
 
+# 锁文件
+uv.lock
+
 # 用户本地配置 (从 templates/config.toml 复制)
 /config.toml
