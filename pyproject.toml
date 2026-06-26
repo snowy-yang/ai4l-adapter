@@ -1,0 +1,50 @@
+[project]
+name = "onebot-adapter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.14.1",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle 错误
+    "W",   # pycodestyle 警告
+    "F",   # Pyflakes（未使用导入/变量）
+    "I",   # isort（导入排序）
+    "B",   # flake8-bugbear（常见 Bug 模式）
+    "C4",  # flake8-comprehensions（推导式优化）
+    "UP",  # pyupgrade（新语法升级）
+    "SIM", # flake8-simplify（简化代码）
+    "PIE", # flake8-pie（小优化）
+    "RUF", # Ruff 特有规则
+]
+ignore = [
+    "E501",  # 行过长，交给 formatter 处理
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # 允许未使用导入（控制公开 API）
+"tests/**" = ["S101"]      # 测试里允许 assert
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.411",
+    "pytest>=8.4.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.15.20",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
