@@ -47,10 +47,13 @@ def event_summary(proto: dict[str, Any]) -> None:
     elif etype == "notice":
         detail = data.get("detail", "")
         sub = data.get("sub", "")
+        # 去掉 group_/friend_ 等前缀, 如 group_recall -> recall
+        detail = detail.split("_", 1)[-1] if "_" in detail else detail
+        sub = sub.split("_", 1)[-1] if "_" in sub else sub
         desc = detail if not sub else f"{detail} {sub}"
         if data.get("comment"):
             desc = f"{desc}: {data['comment']}"
-        line = f"{scope} {desc}"
+        line = f"{scope} [{desc}]"
     else:
         line = f"[{etype}] {data}"
     if len(line) > budget:
