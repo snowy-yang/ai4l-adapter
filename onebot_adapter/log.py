@@ -25,11 +25,14 @@ def terminal_width() -> int:
     return shutil.get_terminal_size((80, 20)).columns
 
 
+_LOG_HEADER_WIDTH = 29  # "2026-06-26 21:01:31 INFO     " = 19+1+8+1
+
+
 def event_summary(proto: dict[str, Any]) -> None:
     """按 INFO 级别输出事件摘要, 截断到终端宽度."""
     etype = proto["type"]
     data = proto["data"]
-    budget = terminal_width() or 80
+    budget = (terminal_width() or 80) - _LOG_HEADER_WIDTH
     scope = f"[群{data.get('group_id')}]" if data.get("group_id") else "[私聊]"
     if etype == "message":
         msg = data.get("message", [])
