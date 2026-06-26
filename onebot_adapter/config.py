@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import dataclasses
 import os
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import tomlkit
 
 _DEFAULT_PATH = "config.toml"
 
@@ -42,21 +43,21 @@ class Config:
         """从 TOML 文件加载配置.
 
         路径查找顺序: 显式参数 > 环境变量 ONEBOT_ADAPTER_CONFIG > ./config.toml
-        未知字段自动忽略.
+        未知字段自动忽略. 使用 tomlkit 解析, 保留注释与格式.
         """
         resolved = _resolve_path(path)
         if resolved is None or not Path(resolved).is_file():
             return cls()
-        with open(resolved, "rb") as f:
-            raw = tomllib.load(f)
+        with open(resolved, encoding="utf-8") as f:
+            doc = tomlkit.parse(f.read())
         return cls(
-            onebot=_section(OneBotConfig, raw.get("onebot", {})),
-            server=_section(ServerConfig, raw.get("server", {})),
-            log=_section(LogConfig, raw.get("log", {})),
+            onebot=_section(OneBotConfig, doc.get("onebot", {})),
+            server=_section(ServerConfig, doc.get("server", {})),
+            log=_section(LogConfig, doc.get("log", {})),
         )
 
 
-def _section(cls: type, raw: dict) -> Any:
+def _section(cls: type, raw: Any) -> Any:
     """只取 cls 已知字段, 忽略多余键."""
     names = {f.name for f in dataclasses.fields(cls)}
     return cls(**{k: v for k, v in raw.items() if k in names})

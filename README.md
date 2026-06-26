@@ -40,9 +40,11 @@ asyncio.run(main())
 
 ### 作为协议桥运行 (推荐)
 
-编辑 `config.toml` 配置 OneBot 连接和服务参数, 然后启动:
+从模板复制配置文件, 按需修改, 然后启动:
 
 ```bash
+cp templates/config.toml config.toml
+# 编辑 config.toml ...
 uv run onebot-adapter
 # 或指定配置文件
 uv run onebot-adapter --config /path/to/config.toml
@@ -71,7 +73,9 @@ asyncio.run(main())
 
 ## 配置
 
-配置文件为 TOML 格式, 路径查找顺序:
+配置文件为 TOML 格式, 模板在 `templates/config.toml`. 使用 tomlkit 解析, 保留注释与格式.
+
+路径查找顺序:
 
 1. 命令行 `--config` / `-c` 参数
 2. 环境变量 `ONEBOT_ADAPTER_CONFIG`
