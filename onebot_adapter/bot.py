@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from .api import ApiCaller
 from .connection import Connection
 from .event import Dispatcher, Event
@@ -38,6 +40,9 @@ class Bot:
 
     async def _on_message(self, data: dict[str, Any]) -> None:
         if "post_type" in data:
+            if data.get("post_type") == "meta_event":
+                logger.debug("心跳 {}", data.get("time", ""))
+                return
             event = Event.from_raw(data)
             await self.dispatcher.dispatch(event)
         else:

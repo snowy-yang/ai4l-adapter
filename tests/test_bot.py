@@ -219,6 +219,23 @@ class TestOnMessageRouting:
         assert result["data"] == {"user_id": 9}
         assert sent[0]["action"] == "get_login_info"
 
+    async def test_heartbeat_silently_consumed(self) -> None:
+        bot = Bot("ws://example")
+        received: list[Event] = []
+
+        @bot.on_message()
+        async def on_msg(event: Event) -> None:
+            received.append(event)
+
+        @bot.on_notice()
+        async def on_notice(event: Event) -> None:
+            received.append(event)
+
+        await bot._on_message(
+            {"post_type": "meta_event", "meta_event_type": "heartbeat", "time": 123}
+        )
+        assert received == []
+
 
 class TestDecorators:
     def test_on_message_returns_decorator(self) -> None:
