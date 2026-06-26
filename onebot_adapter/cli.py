@@ -54,14 +54,10 @@ async def _run(config: Config) -> None:
 
 def main() -> None:
     args = parse_args()
-    if args.init:
-        _init_config(Path(args.config) if args.config else _DEFAULT_CONFIG)
-        return
     config_path = Path(args.config) if args.config else _DEFAULT_CONFIG
     if not config_path.exists():
-        print(f"配置文件不存在: {config_path}")
-        print("用 --init 生成, 或指定路径: -c <path>")
-        sys.exit(1)
+        print(f"配置文件不存在: {config_path}, 从模板自动生成")
+        _init_config(config_path)
     config = Config.load(str(config_path))
     logging.basicConfig(level=getattr(logging, config.log.level.upper(), logging.INFO))
     try:
