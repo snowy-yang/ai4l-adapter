@@ -120,14 +120,16 @@ SSE 首帧发送 `retry: 3000`, 客户端断开后按此间隔自动重连.
 | `message_id` | int / null | 消息 ID, 可能缺失 |
 | `self_id` | int | 机器人 QQ |
 
-消息段使用扁平对象, 不嵌套 `data`, 不含 CQ 码:
+消息段统一对象格式, 不含 CQ 码:
 
 | type | 字段 | 说明 |
 |------|------|------|
 | `text` | `text` | 纯文本 |
 | `at` | `qq` | @某人 |
 | `reply` | `id` | 回复消息 |
-| `image` | `file` + 额外字段 | 图片 |
+| `image` / `video` / `audio` / `voice` / `file` | `content` | 媒体内容, base64 字符串 |
+
+媒体段统一用 `content` 字段承载 base64 编码的二进制数据, 不使用 URL 或文件路径. 事件侧适配器会自动下载 URL 或读取本地路径并转成 base64; 指令侧把 `content` 还原成 OneBot 的 `file: "base64://<content>"`.
 
 #### notice
 
@@ -163,17 +165,19 @@ SSE 首帧发送 `retry: 3000`, 客户端断开后按此间隔自动重连.
 ```json
 {
   "action": "send_msg",
-  "params": {"group_id": 1, "message": "hi"}
+  "params": {
+    "group_id": 1,
+    "message": [
+      {"type": "text", "text": "hi"},
+      {"type": "image", "content": "iVBORw0KGgo="}
+    ]
+  }
 }
 ```
 
 `action` 直接使用 OneBot API 名 (send_msg / send_private_msg / send_group_msg / get_login_info 等). `params` 透传给 OneBot.
 
-`params.message` 使用与事件相同的扁平消息段格式, 适配器自动翻译成 OneBot 嵌套格式. 传字符串时作为纯文本便利处理.
-
-```json
-{"action": "send_msg", "params": {"group_id": 1, "message": [{"type": "text", "text": "hi"}, {"type": "at", "qq": "1"}]}}
-```
+`params.message` 使用与事件相同的消息段格式, 适配器自动翻译成 OneBot 嵌套格式. 媒体段的 `content` (base64) 会还原成 OneBot 的 `file: "base64://<content>"`.
 
 响应:
 
@@ -217,7 +221,17 @@ async def send_action(c: httpx.AsyncClient, action: str, **params):
 async def main():
     async with httpx.AsyncClient() as c:
         # 发消息
-        r = await send_action(c, "send_msg", group_id=123, message="hello")
+        r = await send_action(
+            c, "send_msg", group_id=123, message=[{"type": "text", "text": "hello"}]
+        )
+        print(r)
+        # 发图片
+        import base64
+        with open("cat.png", "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        r = await send_action(
+            c, "send_msg", group_id=123, message=[{"type": "image", "content": b64}]
+        )
         print(r)
         # 收事件 (阻塞, 放到另一个任务里)
         # await listen_events()
@@ -296,7 +310,7 @@ OneBot 实现侧需开启正向 WebSocket 服务, 例如 NapCat:
 
 ```bash
 uv sync                       # 安装依赖
-python -m pytest              # 运行测试 (103 个)
+python -m pytest              # 运行测试 (128 个)
 python -m ruff check .        # lint
 python -m ruff format .       # 格式化
 python -m pyright             # 类型检查

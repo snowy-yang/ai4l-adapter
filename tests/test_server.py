@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import os
+import tempfile
 from typing import Any
+from unittest.mock import patch
 
 from aiohttp.test_utils import TestClient, TestServer
 
 from onebot_adapter.bot import Bot
 from onebot_adapter.event import Event, MessageEvent, NoticeEvent, RequestEvent
-from onebot_adapter.server import Server
+from onebot_adapter.server import Server, _ob_segments_to_proto, _proto_segments_to_ob
 
 
 def _stub_bot_api(
@@ -27,8 +31,170 @@ def _stub_bot_api(
     return sent
 
 
+class TestObSegmentsToProto:
+    async def test_text_segment(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        result = await _ob_segments_to_proto([MessageSegment.text("hi")])
+        assert result == [{"type": "text", "text": "hi"}]
+
+    async def test_at_segment_passed_through_flat(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        result = await _ob_segments_to_proto([MessageSegment.at(1)])
+        assert result == [{"type": "at", "qq": "1"}]
+
+    async def test_reply_segment_passed_through_flat(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        result = await _ob_segments_to_proto([MessageSegment.reply(99)])
+        assert result == [{"type": "reply", "id": "99"}]
+
+    async def test_image_base64_prefix_stripped(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+        seg = MessageSegment(type="image", data={"file": f"base64://{b64}"})
+        result = await _ob_segments_to_proto([seg])
+        assert result == [{"type": "image", "content": b64}]
+
+    async def test_image_url_downloaded_to_base64(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        raw_bytes = b"\x89PNG fake image data"
+        b64_expected = base64.b64encode(raw_bytes).decode("ascii")
+        seg = MessageSegment(type="image", data={"file": "https://example.com/a.png"})
+
+        class FakeResp:
+            def raise_for_status(self) -> None:
+                pass
+
+            async def read(self) -> bytes:
+                return raw_bytes
+
+        class FakeCtx:
+            async def __aenter__(self) -> FakeResp:
+                return FakeResp()
+
+            async def __aexit__(self, *args: Any) -> None:
+                pass
+
+        class FakeSession:
+            closed = False
+
+            def get(self, url: str) -> FakeCtx:
+                return FakeCtx()
+
+            async def close(self) -> None:
+                pass
+
+        fake = FakeSession()
+        with patch("onebot_adapter.server.aiohttp.ClientSession", return_value=fake):
+            result = await _ob_segments_to_proto([seg])
+        assert result == [{"type": "image", "content": b64_expected}]
+
+    async def test_image_local_file_read_to_base64(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        raw_bytes = b"fake file content"
+        b64_expected = base64.b64encode(raw_bytes).decode("ascii")
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(raw_bytes)
+            path = f.name
+        try:
+            seg = MessageSegment(type="image", data={"file": path})
+            result = await _ob_segments_to_proto([seg])
+            assert result == [{"type": "image", "content": b64_expected}]
+        finally:
+            os.unlink(path)
+
+    async def test_image_unrecognized_file_returns_as_is(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        seg = MessageSegment(type="image", data={"file": "not-a-real-path"})
+        result = await _ob_segments_to_proto([seg])
+        assert result == [{"type": "image", "content": "not-a-real-path"}]
+
+    async def test_empty_file_returns_empty_content(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        seg = MessageSegment(type="image", data={"file": ""})
+        result = await _ob_segments_to_proto([seg])
+        assert result == [{"type": "image", "content": ""}]
+
+    async def test_video_segment_uses_content(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        b64 = "AAAAIGZ0cbsAAAAA"
+        seg = MessageSegment(type="video", data={"file": f"base64://{b64}"})
+        result = await _ob_segments_to_proto([seg])
+        assert result == [{"type": "video", "content": b64}]
+
+    async def test_mixed_segments(self) -> None:
+        from onebot_adapter.message import MessageSegment
+
+        b64 = "iVBORw0KGgo="
+        segments = [
+            MessageSegment.text("hi "),
+            MessageSegment.at(1),
+            MessageSegment(type="image", data={"file": f"base64://{b64}"}),
+        ]
+        result = await _ob_segments_to_proto(segments)
+        assert result == [
+            {"type": "text", "text": "hi "},
+            {"type": "at", "qq": "1"},
+            {"type": "image", "content": b64},
+        ]
+
+    async def test_empty_segments(self) -> None:
+        result = await _ob_segments_to_proto([])
+        assert result == []
+
+
+class TestProtoSegmentsToOb:
+    def test_text_segment(self) -> None:
+        result = _proto_segments_to_ob([{"type": "text", "text": "hi"}])
+        assert result == [{"type": "text", "data": {"text": "hi"}}]
+
+    def test_image_content_becomes_base64_file(self) -> None:
+        result = _proto_segments_to_ob([{"type": "image", "content": "iVBORw0KGgo="}])
+        assert result == [{"type": "image", "data": {"file": "base64://iVBORw0KGgo="}}]
+
+    def test_image_content_with_extra_fields(self) -> None:
+        result = _proto_segments_to_ob(
+            [{"type": "image", "content": "abc", "cache": 0}]
+        )
+        assert result == [
+            {"type": "image", "data": {"file": "base64://abc", "cache": 0}}
+        ]
+
+    def test_at_segment_flat_to_nested(self) -> None:
+        result = _proto_segments_to_ob([{"type": "at", "qq": "1"}])
+        assert result == [{"type": "at", "data": {"qq": "1"}}]
+
+    def test_reply_segment(self) -> None:
+        result = _proto_segments_to_ob([{"type": "reply", "id": "99"}])
+        assert result == [{"type": "reply", "data": {"id": "99"}}]
+
+    def test_video_content_becomes_base64_file(self) -> None:
+        result = _proto_segments_to_ob([{"type": "video", "content": "AAAA"}])
+        assert result == [{"type": "video", "data": {"file": "base64://AAAA"}}]
+
+    def test_empty_list(self) -> None:
+        assert _proto_segments_to_ob([]) == []
+
+    def test_roundtrip_text(self) -> None:
+        proto = [{"type": "text", "text": "hello"}]
+        ob = _proto_segments_to_ob(proto)
+        assert ob == [{"type": "text", "data": {"text": "hello"}}]
+
+    def test_segment_without_content_flat_to_nested(self) -> None:
+        result = _proto_segments_to_ob([{"type": "poke", "id": "5", "name": "x"}])
+        assert result == [{"type": "poke", "data": {"id": "5", "name": "x"}}]
+
+
 class TestTranslate:
-    def test_message_group_event(self) -> None:
+    async def test_message_group_event(self) -> None:
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
@@ -40,7 +206,8 @@ class TestTranslate:
                 "self_id": 100,
             }
         )
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["type"] == "message"
         assert proto["data"] == {
             "kind": "group",
@@ -51,7 +218,7 @@ class TestTranslate:
             "self_id": 100,
         }
 
-    def test_message_private_kind_and_none_group(self) -> None:
+    async def test_message_private_kind_and_none_group(self) -> None:
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
@@ -60,11 +227,12 @@ class TestTranslate:
                 "message": "x",
             }
         )
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["data"]["kind"] == "private"
         assert proto["data"]["group_id"] is None
 
-    def test_message_segments_flattened_to_proto(self) -> None:
+    async def test_message_text_and_at_segments(self) -> None:
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
@@ -75,36 +243,36 @@ class TestTranslate:
                 ],
             }
         )
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["data"]["message"] == [
             {"type": "text", "text": "hi "},
             {"type": "at", "qq": "1"},
         ]
 
-    def test_message_image_segment_with_extra_fields(self) -> None:
+    async def test_message_image_base64_prefix(self) -> None:
+        b64 = "iVBORw0KGgo="
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
                 "message_type": "private",
                 "user_id": 1,
-                "message": [
-                    {"type": "image", "data": {"file": "f.png", "cache": 0}},
-                ],
+                "message": [{"type": "image", "data": {"file": f"base64://{b64}"}}],
             }
         )
-        proto = Server._translate(event)
-        assert proto["data"]["message"] == [
-            {"type": "image", "file": "f.png", "cache": 0},
-        ]
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
+        assert proto["data"]["message"] == [{"type": "image", "content": b64}]
 
-    def test_message_empty_segments(self) -> None:
+    async def test_message_empty_segments(self) -> None:
         event = MessageEvent.from_raw(
             {"post_type": "message", "message_type": "private", "user_id": 1}
         )
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["data"]["message"] == []
 
-    def test_notice_event(self) -> None:
+    async def test_notice_event(self) -> None:
         event = NoticeEvent.from_raw(
             {
                 "post_type": "notice",
@@ -114,7 +282,8 @@ class TestTranslate:
                 "group_id": 4,
             }
         )
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["type"] == "notice"
         assert proto["data"] == {
             "notice_type": "poke",
@@ -123,7 +292,7 @@ class TestTranslate:
             "group_id": 4,
         }
 
-    def test_request_event(self) -> None:
+    async def test_request_event(self) -> None:
         event = RequestEvent.from_raw(
             {
                 "post_type": "request",
@@ -133,15 +302,17 @@ class TestTranslate:
                 "comment": "hi",
             }
         )
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["type"] == "request"
         assert proto["data"]["request_type"] == "friend"
         assert proto["data"]["comment"] == "hi"
         assert proto["data"]["group_id"] is None
 
-    def test_unknown_event_falls_back_to_raw(self) -> None:
+    async def test_unknown_event_falls_back_to_raw(self) -> None:
         event = Event(post_type="weird", raw={"foo": "bar"})
-        proto = Server._translate(event)
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
         assert proto["type"] == "weird"
         assert proto["data"] == {"foo": "bar"}
 
@@ -228,48 +399,84 @@ class TestHandleAction:
         _stub_bot_api(bot, {"retcode": 0, "data": {"message_id": 7}})
         server = Server(bot)
         status, payload = await server._handle_action(
-            {"action": "send_msg", "params": {"group_id": 1, "message": "hi"}}
+            {
+                "action": "send_msg",
+                "params": {"group_id": 1, "message": [{"type": "text", "text": "hi"}]},
+            }
         )
         assert status == 200
         assert payload == {"ok": True, "data": {"message_id": 7}, "error": None}
 
-    async def test_string_message_normalized_to_text_segment(self) -> None:
+    async def test_text_segment_translated_to_onebot(self) -> None:
         bot = Bot("ws://x")
         sent = _stub_bot_api(bot)
         server = Server(bot)
         await server._handle_action(
-            {"action": "send_msg", "params": {"user_id": 1, "message": "hello"}}
+            {
+                "action": "send_msg",
+                "params": {
+                    "user_id": 1,
+                    "message": [{"type": "text", "text": "hello"}],
+                },
+            }
         )
         assert sent[0]["params"]["message"] == [
             {"type": "text", "data": {"text": "hello"}}
         ]
 
-    async def test_proto_segments_translated_to_onebot(self) -> None:
+    async def test_image_content_translated_to_base64_file(self) -> None:
         bot = Bot("ws://x")
         sent = _stub_bot_api(bot)
         server = Server(bot)
-        proto_segs = [
-            {"type": "text", "text": "hi "},
-            {"type": "at", "qq": "1"},
-        ]
         await server._handle_action(
-            {"action": "send_msg", "params": {"user_id": 1, "message": proto_segs}}
+            {
+                "action": "send_msg",
+                "params": {
+                    "user_id": 1,
+                    "message": [{"type": "image", "content": "iVBORw0KGgo="}],
+                },
+            }
+        )
+        assert sent[0]["params"]["message"] == [
+            {"type": "image", "data": {"file": "base64://iVBORw0KGgo="}}
+        ]
+
+    async def test_image_content_with_extra_fields(self) -> None:
+        bot = Bot("ws://x")
+        sent = _stub_bot_api(bot)
+        server = Server(bot)
+        await server._handle_action(
+            {
+                "action": "send_msg",
+                "params": {
+                    "user_id": 1,
+                    "message": [{"type": "image", "content": "abc", "cache": 0}],
+                },
+            }
+        )
+        assert sent[0]["params"]["message"] == [
+            {"type": "image", "data": {"file": "base64://abc", "cache": 0}}
+        ]
+
+    async def test_at_segment_translated_to_onebot(self) -> None:
+        bot = Bot("ws://x")
+        sent = _stub_bot_api(bot)
+        server = Server(bot)
+        await server._handle_action(
+            {
+                "action": "send_msg",
+                "params": {
+                    "user_id": 1,
+                    "message": [
+                        {"type": "text", "text": "hi "},
+                        {"type": "at", "qq": "1"},
+                    ],
+                },
+            }
         )
         assert sent[0]["params"]["message"] == [
             {"type": "text", "data": {"text": "hi "}},
             {"type": "at", "data": {"qq": "1"}},
-        ]
-
-    async def test_proto_image_segment_translated_to_onebot(self) -> None:
-        bot = Bot("ws://x")
-        sent = _stub_bot_api(bot)
-        server = Server(bot)
-        proto_segs = [{"type": "image", "file": "f.png", "cache": 0}]
-        await server._handle_action(
-            {"action": "send_msg", "params": {"user_id": 1, "message": proto_segs}}
-        )
-        assert sent[0]["params"]["message"] == [
-            {"type": "image", "data": {"file": "f.png", "cache": 0}},
         ]
 
     async def test_empty_message_list_passes_through(self) -> None:
@@ -280,6 +487,16 @@ class TestHandleAction:
             {"action": "send_msg", "params": {"user_id": 1, "message": []}}
         )
         assert sent[0]["params"]["message"] == []
+
+    async def test_non_list_message_passed_unchanged(self) -> None:
+        bot = Bot("ws://x")
+        sent = _stub_bot_api(bot)
+        server = Server(bot)
+        # 字符串不再特殊处理, 原样透传 (OneBot 会拒绝)
+        await server._handle_action(
+            {"action": "send_msg", "params": {"user_id": 1, "message": "raw string"}}
+        )
+        assert sent[0]["params"]["message"] == "raw string"
 
     async def test_no_params_defaults_to_empty(self) -> None:
         bot = Bot("ws://x")
@@ -321,7 +538,10 @@ class TestHandleAction:
         bot.connection.send = fake_send  # type: ignore[method-assign]
         server = Server(bot)
         status, payload = await server._handle_action(
-            {"action": "send_msg", "params": {"message": "x"}}
+            {
+                "action": "send_msg",
+                "params": {"message": [{"type": "text", "text": "x"}]},
+            }
         )
         assert status == 200
         assert payload["ok"] is False
@@ -351,7 +571,13 @@ class TestActionEndpointIntegration:
         try:
             resp = await client.post(
                 "/action",
-                json={"action": "send_msg", "params": {"group_id": 1, "message": "hi"}},
+                json={
+                    "action": "send_msg",
+                    "params": {
+                        "group_id": 1,
+                        "message": [{"type": "text", "text": "hi"}],
+                    },
+                },
             )
             assert resp.status == 200
             body = await resp.json()
