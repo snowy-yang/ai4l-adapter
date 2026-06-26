@@ -33,7 +33,9 @@ def event_summary(proto: dict[str, Any]) -> None:
     etype = proto["type"]
     data = proto["data"]
     budget = (terminal_width() or 80) - _LOG_HEADER_WIDTH
-    scope = f"[群{data.get('group_id')}]" if data.get("group_id") else "[私聊]"
+    group_id = data.get("group_id")
+    user_id = data.get("user_id")
+    scope = f"[群{group_id}]" if group_id else f"[私{user_id}]"
     if etype == "message":
         msg = data.get("message", [])
         parts: list[str] = []
@@ -50,10 +52,12 @@ def event_summary(proto: dict[str, Any]) -> None:
         # 去掉 group_/friend_ 等前缀, 如 group_recall -> recall
         detail = detail.split("_", 1)[-1] if "_" in detail else detail
         sub = sub.split("_", 1)[-1] if "_" in sub else sub
-        desc = detail if not sub else f"{detail} {sub}"
+        # notify 是包装层, 实际动作在 sub 里
+        desc = sub if detail == "notify" else (detail if not sub else f"{detail} {sub}")
         if data.get("comment"):
-            desc = f"{desc}: {data['comment']}"
-        line = f"{scope} [{desc}]"
+            line = f"{scope} [{desc}] {data['comment']}"
+        else:
+            line = f"{scope} [{desc}]"
     else:
         line = f"[{etype}] {data}"
     if len(line) > budget:
