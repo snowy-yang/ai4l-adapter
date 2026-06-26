@@ -45,9 +45,9 @@ asyncio.run(main())
 ```bash
 cp templates/config.toml config.toml
 # 编辑 config.toml ...
-uv run onebot-adapter
+uv run python main.py
 # 或指定配置文件
-uv run onebot-adapter --config /path/to/config.toml
+uv run python main.py -c /path/to/config.toml
 # 或直接用 python
 python main.py -c config.toml
 ```
