@@ -156,6 +156,7 @@ class Server:
 
     async def _on_event(self, event: Event) -> None:
         proto = await self._translate(event)
+        logger.debug("事件 {}: {}", proto["type"], proto["data"])
         for q in self._subscribers:
             q.put_nowait(proto)
 
