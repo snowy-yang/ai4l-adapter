@@ -5,6 +5,7 @@ import base64
 import contextlib
 import json
 import os
+import shutil as _shutil
 from typing import Any, cast
 
 import aiohttp
@@ -104,6 +105,10 @@ def _packb(obj: Any) -> bytes:
     return cast(bytes, msgpack.packb(obj, use_bin_type=True))
 
 
+def _terminal_width() -> int:
+    return _shutil.get_terminal_size((80, 20)).columns
+
+
 class Server:
     """协议桥, 把 OneBot 翻译成极简协议对外暴露.
 
@@ -165,9 +170,11 @@ class Server:
     def _log_event_summary(proto: dict[str, Any]) -> None:
         etype = proto["type"]
         data = proto["data"]
+        width = _terminal_width()
+        # 预留标签和前缀的空间
+        budget = max(width - 40, 20) if width else 50
         if etype == "message":
             msg = data.get("message", [])
-            # 取消息段的文本表示, 截断到一行
             parts: list[str] = []
             for seg in msg:
                 if seg.get("type") == "text":
@@ -175,8 +182,8 @@ class Server:
                 else:
                     parts.append(f"[{seg.get('type')}]")
             text = "".join(parts).replace("\n", " ")
-            if len(text) > 50:
-                text = text[:50] + "..."
+            if len(text) > budget:
+                text = text[:budget] + "..."
             scope = (
                 f"group={data.get('group_id')}" if data.get("group_id") else "private"
             )
@@ -188,14 +195,15 @@ class Server:
                 text,
             )
         elif etype == "notice":
-            logger.info(
-                "[notice] {} user={} sub={}",
-                data.get("detail"),
-                data.get("user_id"),
-                data.get("sub"),
-            )
+            summary = str(data)
+            if len(summary) > budget:
+                summary = summary[:budget] + "..."
+            logger.info("[notice] {}", summary)
         else:
-            logger.info("[{}] {}", etype, data)
+            summary = str(data)
+            if len(summary) > budget:
+                summary = summary[:budget] + "..."
+            logger.info("[{}] {}", etype, summary)
 
     async def _translate(self, event: Event) -> dict[str, Any]:
         if isinstance(event, MessageEvent):
