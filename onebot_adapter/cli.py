@@ -10,6 +10,7 @@ from loguru import logger
 
 from . import Bot, Server
 from .config import Config
+from .log import setup as setup_logging
 
 _TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "config.toml"
 _DEFAULT_CONFIG = Path("config.toml")
@@ -53,37 +54,23 @@ async def _run(config: Config) -> None:
     await server.run()
 
 
-def _setup_logging(level: str) -> None:
-    """配置 loguru, 替换默认 handler."""
-    logger.remove()
-    logger.add(
-        sys.stderr,
-        level=level.upper(),
-        format=(
-            "<green>{time:YYYY-MM-DD HH:mm:ss}</green> "
-            "<level>{level: <8}</level> "
-            "<level>{message}</level>"
-        ),
-    )
-
-
 def main() -> None:
     args = parse_args()
     config_path = Path(args.config) if args.config else _DEFAULT_CONFIG
 
     if args.init:
-        _setup_logging("INFO")
+        setup_logging("INFO")
         _init_config(config_path)
         return
 
     if not config_path.exists():
-        _setup_logging("INFO")
+        setup_logging("INFO")
         _init_config(config_path)
         logger.error("请编辑 {} 后重新启动", config_path)
         sys.exit(1)
 
     config = Config.load(str(config_path))
-    _setup_logging(config.log.level)
+    setup_logging(config.log.level)
     try:
         asyncio.run(_run(config))
     except KeyboardInterrupt:

@@ -5,7 +5,6 @@ import base64
 import contextlib
 import json
 import os
-import shutil as _shutil
 from typing import Any, cast
 
 import aiohttp
@@ -16,6 +15,7 @@ from loguru import logger
 from .api import ApiError
 from .bot import Bot
 from .event import Event, MessageEvent, NoticeEvent, RequestEvent
+from .log import event_summary
 from .message import MessageSegment
 
 # 这些 type 的消息段含二进制/媒体资源, 用 content (base64) 表示.
@@ -105,10 +105,6 @@ def _packb(obj: Any) -> bytes:
     return cast(bytes, msgpack.packb(obj, use_bin_type=True))
 
 
-def _terminal_width() -> int:
-    return _shutil.get_terminal_size((80, 20)).columns
-
-
 class Server:
     """协议桥, 把 OneBot 翻译成极简协议对外暴露.
 
@@ -162,39 +158,9 @@ class Server:
     async def _on_event(self, event: Event) -> None:
         proto = await self._translate(event)
         logger.debug("事件 {}: {}", proto["type"], proto["data"])
-        self._log_event_summary(proto)
+        event_summary(proto)
         for q in self._subscribers:
             q.put_nowait(proto)
-
-    @staticmethod
-    def _log_event_summary(proto: dict[str, Any]) -> None:
-        etype = proto["type"]
-        data = proto["data"]
-        width = _terminal_width()
-        budget = width or 80
-        scope = f"[群{data.get('group_id')}]" if data.get("group_id") else "[私聊]"
-        if etype == "message":
-            msg = data.get("message", [])
-            parts: list[str] = []
-            for seg in msg:
-                if seg.get("type") == "text":
-                    parts.append(seg.get("text", ""))
-                else:
-                    parts.append(f"[{seg.get('type')}]")
-            text = "".join(parts).replace("\n", " ")
-            line = f"{scope} {text}"
-        elif etype == "notice":
-            detail = data.get("detail", "")
-            sub = data.get("sub", "")
-            desc = detail if not sub else f"{detail} {sub}"
-            if data.get("comment"):
-                desc = f"{desc}: {data['comment']}"
-            line = f"{scope} {desc}"
-        else:
-            line = f"[{etype}] {data}"
-        if len(line) > budget:
-            line = line[:budget] + "..."
-        logger.info(line)
 
     async def _translate(self, event: Event) -> dict[str, Any]:
         if isinstance(event, MessageEvent):
