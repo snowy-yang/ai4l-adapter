@@ -1,10 +1,10 @@
 # onebot-adapter
 
-OneBot 11 正向 WebSocket 适配器, 并内置一个 HTTP + SSE 桥, 把 OneBot 翻译成极简协议对外暴露.
+OneBot 11 正向 WebSocket 适配器, 并内置协议桥, 把 OneBot 翻译成极简协议对外暴露.
 
 - 收: OneBot 实现 (NapCat / Lagrange / go-cqhttp 等) 通过正向 WebSocket 推送事件, 适配器接收并解析.
 - 发: 调用 OneBot API (send_msg 等) 并等待响应, 通过 echo 字段配对请求与响应.
-- 桥: `Server` 把 OneBot 事件翻译成极简格式经 SSE 推出, 把外部 HTTP 指令翻译成 OneBot API 调用.
+- 桥: `Server` 提供两条通道 -- HTTP (JSON + SSE) 和 WebSocket (msgpack), 共用同一套事件翻译与指令处理逻辑.
 
 ## 安装
 
@@ -61,19 +61,21 @@ asyncio.run(main())
 python main.py
 ```
 
-桥启动后, 你的代码用 httpx 连上来即可, 无需接触 OneBot 细节.
+桥启动后, 你的代码用 httpx (HTTP 通道) 或 websockets (WS 通道) 连上来即可, 无需接触 OneBot 细节.
 
 ## 架构
 
 ```
-OneBot 实现                  onebot-adapter                   你的代码
+OneBot 实现                  onebot-adapter                              你的代码
                                   Bot
    │ WebSocket                    │
-   ├──── 事件 ───────────► Connection ──► Dispatcher ──► Server._translate ──► SSE /events ──────► httpx SSE 客户端
-   │                              │                                              │
-   │                              ApiCaller ◄── _handle_action ◄── POST /action ◄── httpx POST 客户端
-   ├◄── API 响应 ───────────────┤
-   └──── API 调用 ──────────────►┘
+   ├──── 事件 ───────────► Connection ──► Dispatcher ──► Server._translate ──┬──► SSE /events (JSON)  ──► httpx SSE 客户端
+   │                              │                                            │
+   │                              ApiCaller ◄── _handle_action ◄──────────────┼──► POST /action (JSON)  ◄── httpx POST 客户端
+   ├◄── API 响应 ───────────────┤                                            │
+   └──── API 调用 ──────────────►┘                                            ├──► WS /ws (msgpack)  ──► websockets 客户端
+                                                                             │    (事件推出 + 指令收发)
+                                                                             └──► 双向 msgpack 二进制帧
 ```
 
 ### 模块
@@ -85,9 +87,17 @@ OneBot 实现                  onebot-adapter                   你的代码
 | `event.py` | 事件解析与分发, Event / MessageEvent / NoticeEvent / RequestEvent |
 | `message.py` | 消息段与消息列表, 支持字符串 / 段 / 字典互转 |
 | `bot.py` | 组合以上三层, 提供便捷 API 封装与装饰器 |
-| `server.py` | HTTP + SSE 桥, 事件翻译推出, 指令翻译转入 |
+| `server.py` | 协议桥, HTTP (JSON+SSE) + WebSocket (msgpack) 双通道 |
 
 ## 协议规范
+
+两条通道共用同一套事件格式和指令格式, 只是传输编码不同:
+
+| 通道 | 路径 | 编码 | 事件 | 指令 |
+|------|------|------|------|------|
+| HTTP | `GET /events` | JSON + SSE | 推送 | - |
+| HTTP | `POST /action` | JSON | - | 请求/响应 |
+| WebSocket | `WS /ws` | msgpack 二进制帧 | 推送 | 请求/响应 |
 
 ### 事件 (SSE)
 
@@ -193,6 +203,17 @@ SSE 首帧发送 `retry: 3000`, 客户端断开后按此间隔自动重连.
 {"ok": false, "data": null, "error": {"retcode": -1, "message": "..."}}
 ```
 
+### WebSocket (msgpack)
+
+连接 `WS /ws`, 升级为 WebSocket 后全走 msgpack 二进制帧. 事件和指令共用一条连接.
+
+- 事件推送: 服务端发 BINARY 帧, msgpack 编码的 `{"type": "message", "data": {...}}` (与 SSE 的 JSON 结构相同, 只是编码不同).
+- 指令请求: 客户端发 BINARY 帧, msgpack 编码的 `{"action": "send_msg", "params": {...}}`.
+- 指令响应: 服务端发 BINARY 帧, msgpack 编码的 `{"ok": true, "data": {...}, "error": null}`.
+- TEXT 帧被忽略, 只处理 BINARY 帧.
+
+事件和指令的格式与 HTTP 通道完全一致, 仅编码从 JSON 换成 msgpack.
+
 ## 客户端示例 (httpx)
 
 ```python
@@ -239,6 +260,44 @@ async def main():
 asyncio.run(main())
 ```
 
+## 客户端示例 (websockets + msgpack)
+
+```python
+import asyncio
+import base64
+import msgpack
+import websockets
+
+async def main():
+    async with websockets.connect("ws://127.0.0.1:8080/ws") as ws:
+        # 发消息
+        req = {
+            "action": "send_msg",
+            "params": {"group_id": 123, "message": [{"type": "text", "text": "hello"}]},
+        }
+        await ws.send(msgpack.packb(req, use_bin_type=True))
+        resp = msgpack.unpackb(await ws.recv(), raw=False)
+        print(resp)  # {"ok": True, "data": {"message_id": 7}, "error": None}
+
+        # 发图片
+        with open("cat.png", "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        req = {
+            "action": "send_msg",
+            "params": {"group_id": 123, "message": [{"type": "image", "content": b64}]},
+        }
+        await ws.send(msgpack.packb(req, use_bin_type=True))
+        resp = msgpack.unpackb(await ws.recv(), raw=False)
+        print(resp)
+
+        # 收事件 (与发指令在同一条连接上)
+        while True:
+            proto = msgpack.unpackb(await ws.recv(), raw=False)
+            print(f"[{proto['type']}] {proto['data']}")
+
+asyncio.run(main())
+```
+
 ## API 参考
 
 ### Bot
@@ -260,7 +319,7 @@ Bot(ws_url, *, access_token=None, reconnect_interval=3.0)
 ### Server
 
 ```python
-Server(bot, *, host="127.0.0.1", port=8080, events_path="/events", action_path="/action")
+Server(bot, *, host="127.0.0.1", port=8080, events_path="/events", action_path="/action", ws_path="/ws")
 ```
 
 - `await server.run()` — 启动 HTTP + SSE 服务并阻塞运行 OneBot WS 连接
@@ -310,7 +369,7 @@ OneBot 实现侧需开启正向 WebSocket 服务, 例如 NapCat:
 
 ```bash
 uv sync                       # 安装依赖
-python -m pytest              # 运行测试 (128 个)
+python -m pytest              # 运行测试 (136 个)
 python -m ruff check .        # lint
 python -m ruff format .       # 格式化
 python -m pyright             # 类型检查

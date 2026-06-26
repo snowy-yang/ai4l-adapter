@@ -4,14 +4,20 @@ import asyncio
 import base64
 import os
 import tempfile
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
+import aiohttp
+import msgpack
 from aiohttp.test_utils import TestClient, TestServer
 
 from onebot_adapter.bot import Bot
 from onebot_adapter.event import Event, MessageEvent, NoticeEvent, RequestEvent
 from onebot_adapter.server import Server, _ob_segments_to_proto, _proto_segments_to_ob
+
+
+def _pack(obj: Any, **kwargs: Any) -> bytes:
+    return cast(bytes, msgpack.packb(obj, **kwargs))
 
 
 def _stub_bot_api(
@@ -331,18 +337,25 @@ class TestServerConstruction:
         assert server.port == 8080
         assert server.events_path == "/events"
         assert server.action_path == "/action"
+        assert server.ws_path == "/ws"
 
     def test_custom_paths(self) -> None:
         bot = Bot("ws://x")
         server = Server(
-            bot, host="0.0.0.0", port=9000, events_path="/e", action_path="/a"
+            bot,
+            host="0.0.0.0",
+            port=9000,
+            events_path="/e",
+            action_path="/a",
+            ws_path="/w",
         )
         assert server.host == "0.0.0.0"
         assert server.port == 9000
         assert server.events_path == "/e"
         assert server.action_path == "/a"
+        assert server.ws_path == "/w"
 
-    def test_build_app_has_both_routes(self) -> None:
+    def test_build_app_has_all_routes(self) -> None:
         bot = Bot("ws://x")
         server = Server(bot)
         app = server._build_app()
@@ -350,6 +363,7 @@ class TestServerConstruction:
         paths = {r.canonical for r in resources if r is not None}
         assert "/events" in paths
         assert "/action" in paths
+        assert "/ws" in paths
 
 
 class TestOnEventDispatch:
@@ -607,5 +621,184 @@ class TestActionEndpointIntegration:
         try:
             resp = await client.post("/action", json={"params": {}})
             assert resp.status == 400
+        finally:
+            await client.close()
+
+
+class TestWebsocketEndpoint:
+    async def test_action_roundtrip_msgpack(self) -> None:
+        bot = Bot("ws://x")
+        _stub_bot_api(bot, {"retcode": 0, "data": {"message_id": 42}})
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            req = {
+                "action": "send_msg",
+                "params": {"group_id": 1, "message": [{"type": "text", "text": "hi"}]},
+            }
+            await ws.send_bytes(_pack(req, use_bin_type=True))
+            msg = await ws.receive(timeout=2)
+            assert msg.type == aiohttp.WSMsgType.BINARY
+            resp = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+            assert resp == {"ok": True, "data": {"message_id": 42}, "error": None}
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_action_missing_action_returns_error(self) -> None:
+        bot = Bot("ws://x")
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await ws.send_bytes(_pack({"params": {}}, use_bin_type=True))
+            msg = await ws.receive(timeout=2)
+            assert msg.type == aiohttp.WSMsgType.BINARY
+            resp = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+            assert resp["ok"] is False
+            assert resp["error"]["message"] == "missing action"
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_action_api_error_returns_error_body(self) -> None:
+        bot = Bot("ws://x")
+
+        async def fake_send(payload: dict[str, Any]) -> None:
+            bot.api.feed_response(
+                {"retcode": 1000, "msg": "参数错误", "echo": payload["echo"]}
+            )
+
+        bot.connection.send = fake_send  # type: ignore[method-assign]
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            req = {
+                "action": "send_msg",
+                "params": {"message": [{"type": "text", "text": "x"}]},
+            }
+            await ws.send_bytes(_pack(req, use_bin_type=True))
+            msg = await ws.receive(timeout=2)
+            resp = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+            assert resp["ok"] is False
+            assert resp["error"] == {"retcode": 1000, "message": "参数错误"}
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_event_pushed_as_msgpack(self) -> None:
+        bot = Bot("ws://x")
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            # 等 push_task 注册到 subscribers
+            await asyncio.sleep(0.1)
+            # 触发一个 notice 事件 (无媒体, 无需网络)
+            raw = {"post_type": "notice", "notice_type": "poke", "user_id": 9}
+            await bot._on_message(raw)
+            msg = await ws.receive(timeout=2)
+            assert msg.type == aiohttp.WSMsgType.BINARY
+            proto = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+            assert proto["type"] == "notice"
+            assert proto["data"]["notice_type"] == "poke"
+            assert proto["data"]["user_id"] == 9
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_message_event_with_text_pushed_as_msgpack(self) -> None:
+        bot = Bot("ws://x")
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            await asyncio.sleep(0.1)
+            raw = {
+                "post_type": "message",
+                "message_type": "group",
+                "user_id": 1,
+                "group_id": 2,
+                "message": "hello",
+                "message_id": 55,
+            }
+            await bot._on_message(raw)
+            msg = await ws.receive(timeout=2)
+            proto = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+            assert proto["type"] == "message"
+            assert proto["data"]["kind"] == "group"
+            assert proto["data"]["message"] == [{"type": "text", "text": "hello"}]
+            assert proto["data"]["message_id"] == 55
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_action_with_image_content_translated(self) -> None:
+        bot = Bot("ws://x")
+        sent = _stub_bot_api(bot)
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            req = {
+                "action": "send_msg",
+                "params": {
+                    "user_id": 1,
+                    "message": [{"type": "image", "content": "iVBORw0KGgo="}],
+                },
+            }
+            await ws.send_bytes(_pack(req, use_bin_type=True))
+            await ws.receive(timeout=2)
+            assert sent[0]["params"]["message"] == [
+                {"type": "image", "data": {"file": "base64://iVBORw0KGgo="}}
+            ]
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_text_frame_ignored(self) -> None:
+        bot = Bot("ws://x")
+        _stub_bot_api(bot)
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            # 发 TEXT 帧, 应被忽略 (不发响应)
+            await ws.send_str("not msgpack")
+            # 发一个正确的 BINARY 帧, 确认连接仍正常
+            await ws.send_bytes(_pack({"action": "get_login_info"}, use_bin_type=True))
+            msg = await ws.receive(timeout=2)
+            assert msg.type == aiohttp.WSMsgType.BINARY
+            resp = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+            assert resp["ok"] is True
+            await ws.close()
+        finally:
+            await client.close()
+
+    async def test_multiple_actions_sequential(self) -> None:
+        bot = Bot("ws://x")
+        _stub_bot_api(bot, {"retcode": 0, "data": {"user_id": 1}})
+        server = Server(bot)
+        client = TestClient(TestServer(server._build_app()))
+        await client.start_server()
+        try:
+            ws = await client.ws_connect("/ws")
+            for _ in range(3):
+                await ws.send_bytes(
+                    _pack({"action": "get_login_info"}, use_bin_type=True)
+                )
+                msg = await ws.receive(timeout=2)
+                resp = msgpack.unpackb(cast(bytes, msg.data), raw=False)
+                assert resp["ok"] is True
+            await ws.close()
         finally:
             await client.close()
