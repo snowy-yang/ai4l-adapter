@@ -182,9 +182,9 @@ class Server:
                     parts.append(f"[{seg.get('type')}]")
             text = "".join(parts).replace("\n", " ")
             scope = (
-                f"group={data.get('group_id')}" if data.get("group_id") else "private"
+                f"[群{data.get('group_id')}]" if data.get("group_id") else "[私聊]"
             )
-            line = f"[message] {scope} user={data.get('user_id')} {data.get('detail')} | {text}"
+            line = f"{scope} {text}"
         elif etype == "notice":
             line = f"[notice] {data}"
         else:
