@@ -9,6 +9,12 @@ dependencies = [
     "msgpack>=1.1.0",
 ]
 
+[project.scripts]
+onebot-adapter = "onebot_adapter.cli:main"
+
+[tool.uv]
+package = true
+
 [tool.ruff]
 target-version = "py313"
 line-length = 88

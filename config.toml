@@ -1,0 +1,20 @@
+# onebot-adapter 配置文件
+# 路径查找顺序: 命令行 --config > 环境变量 ONEBOT_ADAPTER_CONFIG > ./config.toml
+
+# ---- OneBot WebSocket 连接 ----
+[onebot]
+ws_url = "ws://127.0.0.1:3001"   # OneBot 实现的正向 WS 地址
+access_token = ""                 # 鉴权 token, 留空则不发送 Authorization
+reconnect_interval = 3.0          # 断线重连间隔 (秒)
+
+# ---- 协议桥服务 ----
+[server]
+host = "127.0.0.1"   # 监听地址
+port = 8080          # 监听端口
+events_path = "/events"   # SSE 事件端点 (HTTP/JSON)
+action_path = "/action"   # 指令端点 (HTTP/JSON)
+ws_path = "/ws"           # WebSocket 端点 (msgpack)
+
+# ---- 日志 ----
+[log]
+level = "INFO"   # DEBUG / INFO / WARNING / ERROR
