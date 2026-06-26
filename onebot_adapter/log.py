@@ -43,8 +43,10 @@ def event_summary(proto: dict[str, Any]) -> None:
             if seg.get("type") == "text":
                 parts.append(seg.get("text", ""))
             else:
-                parts.append(f"[{seg.get('type')}]")
+                parts.append(f" [{seg.get('type')}] ")
         text = "".join(parts).replace("\n", " ")
+        # 压缩多余空格, 去掉前后空格
+        text = " ".join(text.split())
         line = f"{scope} {text}"
     elif etype == "notice":
         detail = data.get("detail", "")
