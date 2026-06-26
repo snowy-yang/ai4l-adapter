@@ -171,8 +171,7 @@ class Server:
         etype = proto["type"]
         data = proto["data"]
         width = _terminal_width()
-        # 预留标签和前缀的空间
-        budget = max(width - 40, 20) if width else 50
+        budget = width or 80
         if etype == "message":
             msg = data.get("message", [])
             parts: list[str] = []
@@ -182,28 +181,17 @@ class Server:
                 else:
                     parts.append(f"[{seg.get('type')}]")
             text = "".join(parts).replace("\n", " ")
-            if len(text) > budget:
-                text = text[:budget] + "..."
             scope = (
                 f"group={data.get('group_id')}" if data.get("group_id") else "private"
             )
-            logger.info(
-                "[message] {} user={} {} | {}",
-                scope,
-                data.get("user_id"),
-                data.get("detail"),
-                text,
-            )
+            line = f"[message] {scope} user={data.get('user_id')} {data.get('detail')} | {text}"
         elif etype == "notice":
-            summary = str(data)
-            if len(summary) > budget:
-                summary = summary[:budget] + "..."
-            logger.info("[notice] {}", summary)
+            line = f"[notice] {data}"
         else:
-            summary = str(data)
-            if len(summary) > budget:
-                summary = summary[:budget] + "..."
-            logger.info("[{}] {}", etype, summary)
+            line = f"[{etype}] {data}"
+        if len(line) > budget:
+            line = line[:budget] + "..."
+        logger.info(line)
 
     async def _translate(self, event: Event) -> dict[str, Any]:
         if isinstance(event, MessageEvent):

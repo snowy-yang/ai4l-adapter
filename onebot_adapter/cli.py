@@ -62,7 +62,7 @@ def _setup_logging(level: str) -> None:
         format=(
             "<green>{time:YYYY-MM-DD HH:mm:ss}</green> "
             "<level>{level: <8}</level> "
-            "<cyan>{name}</cyan> - <level>{message}</level>"
+            "<level>{message}</level>"
         ),
     )
 
