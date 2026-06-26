@@ -120,10 +120,9 @@ class Server:
         媒体:  {"type":"image", "content":"<base64>"}   (image/video/audio/file/voice)
         其他:  {"type":"at", "qq":"1"}                   (at/reply 等扁平透传)
 
-    协议事件:
-        message: {"kind","user_id","group_id","message","message_id","self_id"}
-        notice:  {"notice_type","sub_type","user_id","group_id"}
-        request: {"request_type","sub_type","user_id","group_id","comment"}
+    协议事件 (只有 message 和 notice 两种, request 并入 notice):
+        message: {"detail","sub","user_id","group_id","message","message_id","self_id"}
+        notice:  {"detail","sub","user_id","group_id"[,"comment"]}
 
     协议指令:
         {"action": "send_msg", "params": {"group_id": 1, "message": [{"type":"text","text":"hi"}]}}
@@ -167,7 +166,8 @@ class Server:
             return {
                 "type": "message",
                 "data": {
-                    "kind": event.message_type,
+                    "detail": event.message_type,
+                    "sub": event.sub_type,
                     "user_id": event.user_id,
                     "group_id": event.group_id,
                     "message": await _ob_segments_to_proto(event.message.segments),
@@ -175,27 +175,21 @@ class Server:
                     "self_id": event.self_id,
                 },
             }
-        if isinstance(event, NoticeEvent):
-            return {
-                "type": "notice",
-                "data": {
-                    "notice_type": event.notice_type,
-                    "sub_type": event.sub_type,
-                    "user_id": event.user_id,
-                    "group_id": event.group_id,
-                },
+        if isinstance(event, (NoticeEvent, RequestEvent)):
+            detail = (
+                event.notice_type
+                if isinstance(event, NoticeEvent)
+                else event.request_type
+            )
+            data: dict[str, Any] = {
+                "detail": detail,
+                "sub": event.sub_type,
+                "user_id": event.user_id,
+                "group_id": event.group_id,
             }
-        if isinstance(event, RequestEvent):
-            return {
-                "type": "request",
-                "data": {
-                    "request_type": event.request_type,
-                    "sub_type": event.sub_type,
-                    "user_id": event.user_id,
-                    "group_id": event.group_id,
-                    "comment": event.comment,
-                },
-            }
+            if isinstance(event, RequestEvent):
+                data["comment"] = event.comment
+            return {"type": "notice", "data": data}
         return {"type": event.post_type, "data": event.raw}
 
     # ---- 指令处理 ----

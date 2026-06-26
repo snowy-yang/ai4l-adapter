@@ -205,6 +205,7 @@ class TestTranslate:
             {
                 "post_type": "message",
                 "message_type": "group",
+                "sub_type": "normal",
                 "user_id": 1,
                 "group_id": 2,
                 "message": "hi",
@@ -216,7 +217,8 @@ class TestTranslate:
         proto = await server._translate(event)
         assert proto["type"] == "message"
         assert proto["data"] == {
-            "kind": "group",
+            "detail": "group",
+            "sub": "normal",
             "user_id": 1,
             "group_id": 2,
             "message": [{"type": "text", "text": "hi"}],
@@ -224,7 +226,7 @@ class TestTranslate:
             "self_id": 100,
         }
 
-    async def test_message_private_kind_and_none_group(self) -> None:
+    async def test_message_private_detail_and_none_group(self) -> None:
         event = MessageEvent.from_raw(
             {
                 "post_type": "message",
@@ -235,7 +237,7 @@ class TestTranslate:
         )
         server = Server(Bot("ws://x"))
         proto = await server._translate(event)
-        assert proto["data"]["kind"] == "private"
+        assert proto["data"]["detail"] == "private"
         assert proto["data"]["group_id"] is None
 
     async def test_message_text_and_at_segments(self) -> None:
@@ -292,13 +294,13 @@ class TestTranslate:
         proto = await server._translate(event)
         assert proto["type"] == "notice"
         assert proto["data"] == {
-            "notice_type": "poke",
-            "sub_type": "abc",
+            "detail": "poke",
+            "sub": "abc",
             "user_id": 3,
             "group_id": 4,
         }
 
-    async def test_request_event(self) -> None:
+    async def test_request_merged_into_notice(self) -> None:
         event = RequestEvent.from_raw(
             {
                 "post_type": "request",
@@ -310,10 +312,41 @@ class TestTranslate:
         )
         server = Server(Bot("ws://x"))
         proto = await server._translate(event)
-        assert proto["type"] == "request"
-        assert proto["data"]["request_type"] == "friend"
-        assert proto["data"]["comment"] == "hi"
-        assert proto["data"]["group_id"] is None
+        assert proto["type"] == "notice"
+        assert proto["data"] == {
+            "detail": "friend",
+            "sub": "add",
+            "user_id": 5,
+            "group_id": None,
+            "comment": "hi",
+        }
+
+    async def test_request_group_add(self) -> None:
+        event = RequestEvent.from_raw(
+            {
+                "post_type": "request",
+                "request_type": "group",
+                "sub_type": "add",
+                "user_id": 5,
+                "group_id": 10,
+                "comment": "let me in",
+            }
+        )
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
+        assert proto["type"] == "notice"
+        assert proto["data"]["detail"] == "group"
+        assert proto["data"]["sub"] == "add"
+        assert proto["data"]["group_id"] == 10
+        assert proto["data"]["comment"] == "let me in"
+
+    async def test_notice_no_comment_field(self) -> None:
+        event = NoticeEvent.from_raw(
+            {"post_type": "notice", "notice_type": "poke", "user_id": 1}
+        )
+        server = Server(Bot("ws://x"))
+        proto = await server._translate(event)
+        assert "comment" not in proto["data"]
 
     async def test_unknown_event_falls_back_to_raw(self) -> None:
         event = Event(post_type="weird", raw={"foo": "bar"})
@@ -404,7 +437,7 @@ class TestOnEventDispatch:
         raw = {"post_type": "notice", "notice_type": "poke", "user_id": 9}
         await bot._on_message(raw)
         assert q.qsize() == 1
-        assert q.get_nowait()["data"]["notice_type"] == "poke"
+        assert q.get_nowait()["data"]["detail"] == "poke"
 
 
 class TestHandleAction:
@@ -707,7 +740,7 @@ class TestWebsocketEndpoint:
             assert msg.type == aiohttp.WSMsgType.BINARY
             proto = msgpack.unpackb(cast(bytes, msg.data), raw=False)
             assert proto["type"] == "notice"
-            assert proto["data"]["notice_type"] == "poke"
+            assert proto["data"]["detail"] == "poke"
             assert proto["data"]["user_id"] == 9
             await ws.close()
         finally:
@@ -733,7 +766,7 @@ class TestWebsocketEndpoint:
             msg = await ws.receive(timeout=2)
             proto = msgpack.unpackb(cast(bytes, msg.data), raw=False)
             assert proto["type"] == "message"
-            assert proto["data"]["kind"] == "group"
+            assert proto["data"]["detail"] == "group"
             assert proto["data"]["message"] == [{"type": "text", "text": "hello"}]
             assert proto["data"]["message_id"] == 55
             await ws.close()
