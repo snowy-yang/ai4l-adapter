@@ -43,13 +43,18 @@ asyncio.run(main())
 从模板复制配置文件, 按需修改, 然后启动:
 
 ```bash
-cp templates/config.toml config.toml
+# 自动生成配置文件
+python -m onebot_adapter --init
+# 或指定路径生成
+python -m onebot_adapter --init -c /path/to/config.toml
 # 编辑 config.toml ...
 uv run python -m onebot_adapter
 # 或指定配置文件
 uv run python -m onebot_adapter -c /path/to/config.toml
 # 或直接用 python
 python -m onebot_adapter -c config.toml
+# 也可以用根目录 main.py
+python main.py
 ```
 
 也可以在代码中手动运行:

@@ -3,10 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import shutil
 import sys
+from pathlib import Path
 
 from . import Bot, Server
 from .config import Config
+
+_TEMPLATE = Path(__file__).resolve().parent.parent / "templates" / "config.toml"
+_DEFAULT_CONFIG = Path("config.toml")
 
 
 def parse_args() -> argparse.Namespace:
@@ -14,7 +19,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config", "-c", default=None, help="配置文件路径 (默认: ./config.toml)"
     )
+    parser.add_argument(
+        "--init", action="store_true", help="从模板生成 ./config.toml 后退出"
+    )
     return parser.parse_args()
+
+
+def _init_config(target: Path = _DEFAULT_CONFIG) -> Path:
+    """从模板复制配置文件, 若已存在则不覆盖."""
+    if target.exists():
+        print(f"配置文件已存在: {target}")
+        return target
+    shutil.copyfile(_TEMPLATE, target)
+    print(f"已生成: {target}")
+    return target
 
 
 async def _run(config: Config) -> None:
@@ -36,7 +54,15 @@ async def _run(config: Config) -> None:
 
 def main() -> None:
     args = parse_args()
-    config = Config.load(args.config)
+    if args.init:
+        _init_config(Path(args.config) if args.config else _DEFAULT_CONFIG)
+        return
+    config_path = Path(args.config) if args.config else _DEFAULT_CONFIG
+    if not config_path.exists():
+        print(f"配置文件不存在: {config_path}")
+        print("用 --init 生成, 或指定路径: -c <path>")
+        sys.exit(1)
+    config = Config.load(str(config_path))
     logging.basicConfig(level=getattr(logging, config.log.level.upper(), logging.INFO))
     try:
         asyncio.run(_run(config))
